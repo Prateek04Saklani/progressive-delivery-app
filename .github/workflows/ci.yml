@@ -29,30 +29,33 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Get short SHA
+        id: short-sha
+        run: echo "sha=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
       - name: Build and push image to ECR
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.short-sha.outputs.sha }}
 
       - name: Bump image tag in GitOps repo
         env:
           GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          SHORT_SHA: ${{ steps.short-sha.outputs.sha }}
         run: |
           git clone https://x-access-token:${GITOPS_TOKEN}@github.com/${{ env.GITOPS_REPO }}.git gitops-deploy
           cd gitops-deploy
 
-          NEW_IMAGE="${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
+          NEW_IMAGE="${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:${SHORT_SHA}"
 
           sed -i "s|image: .*/${{ env.ECR_REPOSITORY }}:.*|image: ${NEW_IMAGE}|g" canary/rollout.yaml
           sed -i "s|image: .*/${{ env.ECR_REPOSITORY }}:.*|image: ${NEW_IMAGE}|g" blue-green/rollout.yaml
 
           git config user.email "ci@github-actions.com"
           git config user.name "GitHub Actions"
-          git commit -am "chore: deploy ${{ github.sha }}"
+          git commit -am "chore: deploy ${SHORT_SHA}"
           git push
 
