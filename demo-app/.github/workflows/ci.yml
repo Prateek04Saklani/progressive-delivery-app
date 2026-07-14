@@ -1,0 +1,53 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/demo-app
+  GITOPS_REPO: YOUR_USERNAME/gitops-deploy  # TODO: replace YOUR_USERNAME
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Bump image tag in GitOps repo
+        env:
+          GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+        run: |
+          git clone https://x-access-token:${GITOPS_TOKEN}@github.com/${{ env.GITOPS_REPO }}.git gitops-deploy
+          cd gitops-deploy
+
+          NEW_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+
+          sed -i "s|image: ${{ env.REGISTRY }}/.*/demo-app:.*|image: ${NEW_IMAGE}|g" canary/rollout.yaml
+          sed -i "s|image: ${{ env.REGISTRY }}/.*/demo-app:.*|image: ${NEW_IMAGE}|g" blue-green/rollout.yaml
+
+          git config user.email "ci@github-actions.com"
+          git config user.name "GitHub Actions"
+          git commit -am "chore: deploy ${{ github.sha }}"
+          git push
